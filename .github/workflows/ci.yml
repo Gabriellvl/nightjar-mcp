@@ -3,13 +3,32 @@ on:
   push:
     branches: [main]
   pull_request:
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check whitespace and conflict markers
+        if: github.event_name == 'pull_request'
+        run: git diff --check HEAD^1 HEAD
       - uses: actions/setup-node@v4
         with:
           node-version: 20
       - run: npm install
       - run: npm run build
+      - name: Smoke-test the HTTP server
+        run: |
+          npm start &
+          server=$!
+          trap 'kill "$server" 2>/dev/null || true' EXIT
+          curl --silent --show-error --fail --retry 10 --retry-connrefused \
+            --header 'Content-Type: application/json' \
+            --header 'Accept: application/json, text/event-stream' \
+            --data '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"ci","version":"1.0"}}}' \
+            http://localhost:3000/mcp | grep -F '"serverInfo"'
